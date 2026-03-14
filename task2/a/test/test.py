@@ -8,7 +8,7 @@ import time
 def main():
     parser = argparse.ArgumentParser(description="Complex Distributed GEMM & Reduce Example")
     parser.add_argument('--master_addr', type=str, required=True, help="IP address of the Master node")
-    parser.add_argument('--master_port', type=str, default='12345')
+    parser.add_argument('--master_port', type=str, default='29500')
     parser.add_argument('--world_size', type=int, default=2, help="Total number of nodes/processes")
     parser.add_argument('--rank', type=int, required=True, help="Rank of the current process")
     args = parser.parse_args()
@@ -31,6 +31,7 @@ def main():
     # 2. Setup Data for GEMM (General Matrix Multiplication)
     # We simulate a large linear layer: Y = X @ W
     matrix_dim = 2048
+    slice_size = matrix_dim // args.world_size
     torch.manual_seed(42 + args.rank) # Different seed per rank for varied data
     
     # Local shard of the input matrix X
@@ -45,7 +46,7 @@ def main():
 
     # 4. Perform Local GEMM
     # Each rank computes a partial result of the global operation
-    local_output = torch.matmul(local_X, shared_W)
+    local_output = torch.matmul(local_X[:, args.rank * slice_size : (args.rank + 1) * slice_size], shared_W[:, args.rank * slice_size : (args.rank + 1) * slice_size])
     
     # Optional: Brief local work to simulate real-world compute variance
     # time.sleep(0.1 * args.rank) 
@@ -69,7 +70,16 @@ def main():
         total_time = comm_end_time - comp_start_time
         compute_duration = comp_end_time - comp_start_time
         comm_duration = comm_end_time - comm_start_time
-        
+        ref=torch.matmul(local_X, shared_W)
+        if torch.allclose(local_output, ref):
+            print("Result is correct")
+        else:
+            print("Result is incorrect")
+            print(f"Reference: {ref.sum().item():.2f}")
+            print(f"Result: {local_output.sum().item():.2f}")
+            print(f"Difference: {torch.abs(local_output - ref).sum().item():.2f}")
+            print(f"Difference percentage: {torch.abs(local_output - ref).sum().item() / ref.sum().item() * 100:.2f}%")
+            print(f"Reference: {ref.sum().item():.2f}")
         print("\n" + "="*50)
         print(f"DISTRIBUTED PERFORMANCE REPORT (World Size: {args.world_size})")
         print("-"*50)
