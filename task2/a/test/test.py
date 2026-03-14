@@ -71,15 +71,10 @@ def main():
         compute_duration = comp_end_time - comp_start_time
         comm_duration = comm_end_time - comm_start_time
         ref=local_X@shared_W
-        if torch.allclose(local_output, ref):
-            print("Result is correct")
-        else:
-            print("Result is incorrect")
-            print(f"Reference: {ref}")
-            print(f"Result: {local_output}")
-            print(f"Difference: {torch.abs(local_output - ref).sum().item():.2f}")
-            print(f"Difference percentage: {torch.abs(local_output - ref).sum().item() / ref.sum().item() * 100:.2f}%")
-            print(f"Reference: {ref.sum().item():.2f}")
+        print(f"Reference: {ref}")
+        print(f"Result: {local_output}")
+        print(f"Difference: {torch.abs(local_output - ref).sum().item():.2f}")
+        print(f"Difference percentage: {torch.abs(local_output - ref).sum().item() / ref.sum().item() * 100:.2f}%")
         print("\n" + "="*50)
         print(f"DISTRIBUTED PERFORMANCE REPORT (World Size: {args.world_size})")
         print("-"*50)

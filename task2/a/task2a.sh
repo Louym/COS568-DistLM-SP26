@@ -16,7 +16,7 @@ WORLD_SIZE=4
 # Per-worker batch size: 16 * 4 workers = 64 global (same as Task 1)
 PER_DEVICE_BATCH=16
 
-GLUE_DIR="${GLUE_DIR:-$HOME/glue_data}"
+GLUE_DIR="../../glue_data/"
 TASK_NAME=RTE
 PYTHON="${PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,7 +43,7 @@ COMMON_ARGS="\
   --overwrite_output_dir \
   --master_ip ${MASTER_IP} \
   --master_port ${MASTER_PORT} \
-  --world_size ${WORLD_SIZE}"
+  --world_size ${WORLD_SIZE}" \
 
 for RANK in $(seq 0 $((WORLD_SIZE - 1))); do
   NODE="${NODES[$RANK]}"
