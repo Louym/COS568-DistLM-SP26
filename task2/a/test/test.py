@@ -32,7 +32,7 @@ def main():
     # We simulate a large linear layer: Y = X @ W
     matrix_dim = 2048
     slice_size = matrix_dim // args.world_size
-    torch.manual_seed(42 + args.rank) # Different seed per rank for varied data
+    torch.manual_seed(42) # Different seed per rank for varied data
     
     # Local shard of the input matrix X
     local_X = torch.randn(matrix_dim, matrix_dim)
