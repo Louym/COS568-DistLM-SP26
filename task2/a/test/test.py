@@ -46,7 +46,9 @@ def main():
 
     # 4. Perform Local GEMM
     # Each rank computes a partial result of the global operation
-    local_output = local_X[:, args.rank * slice_size : (args.rank + 1) * slice_size]@shared_W[args.rank * slice_size : (args.rank + 1) * slice_size]
+    local_output = torch.zeros(matrix_dim, matrix_dim)
+    for index in range(args.world_size):
+        local_output += local_X[:, index * slice_size : (index + 1) * slice_size]@shared_W[index * slice_size : (index + 1) * slice_size]
     
     # Optional: Brief local work to simulate real-world compute variance
     # time.sleep(0.1 * args.rank) 
