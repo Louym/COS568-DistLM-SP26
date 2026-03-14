@@ -75,8 +75,8 @@ def main():
             print("Result is correct")
         else:
             print("Result is incorrect")
-            print(f"Reference: {ref.sum().item():.2f}")
-            print(f"Result: {local_output.sum().item():.2f}")
+            print(f"Reference: {ref}")
+            print(f"Result: {local_output}")
             print(f"Difference: {torch.abs(local_output - ref).sum().item():.2f}")
             print(f"Difference percentage: {torch.abs(local_output - ref).sum().item() / ref.sum().item() * 100:.2f}%")
             print(f"Reference: {ref.sum().item():.2f}")
