@@ -46,7 +46,7 @@ def main():
 
     # 4. Perform Local GEMM
     # Each rank computes a partial result of the global operation
-    local_output = torch.matmul(local_X[:, args.rank * slice_size : (args.rank + 1) * slice_size], shared_W[:, args.rank * slice_size : (args.rank + 1) * slice_size])
+    local_output = local_X[:, args.rank * slice_size : (args.rank + 1) * slice_size]@shared_W[args.rank * slice_size : (args.rank + 1) * slice_size]
     
     # Optional: Brief local work to simulate real-world compute variance
     # time.sleep(0.1 * args.rank) 
@@ -70,7 +70,7 @@ def main():
         total_time = comm_end_time - comp_start_time
         compute_duration = comp_end_time - comp_start_time
         comm_duration = comm_end_time - comm_start_time
-        ref=torch.matmul(local_X, shared_W)
+        ref=local_X@shared_W
         if torch.allclose(local_output, ref):
             print("Result is correct")
         else:
