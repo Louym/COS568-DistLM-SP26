@@ -495,8 +495,11 @@ def main():
     # Evaluation (single pass on rank 0; weights are synced each step so identical across ranks)
     if args.local_rank in [-1, 0]:
         evaluate(args, model, tokenizer, prefix="")
+    else:
+        torch.distributed.barrier()
     if args.local_rank >= 0:
         torch.distributed.barrier()
+        print("Rank {args.local_rank} ended!")
         torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
