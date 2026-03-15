@@ -280,6 +280,7 @@ def evaluate(args, model, tokenizer, prefix=""):
 
 
 def load_and_cache_examples(args, task, tokenizer, evaluate=False):
+    # Our nodes do not share the same filesystem, so we don't need to barrier here
     if args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
@@ -494,10 +495,8 @@ def main():
     # Evaluation (single pass on rank 0; weights are synced each step so identical across ranks)
     if args.local_rank in [-1, 0]:
         evaluate(args, model, tokenizer, prefix="")
-    if args.local_rank > 0:
+    if args.local_rank >= 0:
         torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
-    if args.local_rank == 0:
         torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
