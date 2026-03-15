@@ -43,12 +43,15 @@ COMMON_ARGS="\
   --overwrite_output_dir \
   --master_ip ${MASTER_IP} \
   --master_port ${MASTER_PORT} \
-  --world_size ${WORLD_SIZE}" \
+  --world_size ${WORLD_SIZE}"
+
+# Use unbuffered Python so "[rank N] process started" prints immediately
+PYTHON="${PYTHON:-python3 -u}"
 
 for RANK in $(seq 0 $((WORLD_SIZE - 1))); do
   NODE="${NODES[$RANK]}"
   echo "Launching rank ${RANK} on ${NODE}..."
-  ssh -n -o "StrictHostKeyChecking=no" "${USER}@${NODE}" \
+  ssh -n -o "StrictHostKeyChecking=no" -o "ConnectTimeout=10" "${USER}@${NODE}" \
     "cd ${SCRIPT_DIR} && ${PYTHON} ${RUN_GLUE} ${COMMON_ARGS} --local_rank ${RANK}" &
 done
 

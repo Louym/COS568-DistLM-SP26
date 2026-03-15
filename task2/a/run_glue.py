@@ -280,6 +280,9 @@ def evaluate(args, model, tokenizer, prefix=""):
 
 
 def load_and_cache_examples(args, task, tokenizer, evaluate=False):
+    if args.local_rank not in [-1, 0]:
+        torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
+
     processor = processors[task]()
     output_mode = output_modes[task]
     # Load data features from cache or dataset file
@@ -312,8 +315,8 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
 
-    if args.local_rank >= 0 and torch.distributed.is_initialized():
-        torch.distributed.barrier()
+    if args.local_rank == 0:
+        torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
@@ -407,6 +410,11 @@ def main():
                         help="Number of workers (nodes) in the process group.")
     args = parser.parse_args()
 
+    # Print immediately so you see each node start (before init_process_group blocks)
+    if args.local_rank >= 0:
+        print("[rank {}] process started, connecting to {}:{} (world_size={})".format(
+            args.local_rank, args.master_ip, args.master_port, args.world_size), flush=True)
+
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir) and args.do_train and not args.overwrite_output_dir:
         raise ValueError("Output directory ({}) already exists and is not empty. Use --overwrite_output_dir to overcome.".format(args.output_dir))
 
@@ -458,8 +466,8 @@ def main():
             do_lower_case=args.do_lower_case,
         )
         model = model_class.from_pretrained(args.model_name_or_path, config=config)
-    if args.local_rank == 0:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training will download model & vocab
+    if args.local_rank >= 0:
+        torch.distributed.barrier()  # all ranks: rank 0 done loading; others can load from cache
     if args.local_rank > 0:
         config = config_class.from_pretrained(
             args.config_name if args.config_name else args.model_name_or_path,
