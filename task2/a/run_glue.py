@@ -211,7 +211,7 @@ def train(args, train_dataset, model, tokenizer):
         if args.local_rank >= 0:
             torch.distributed.barrier()
         ##################################################
-    print(loss_list)
+    print(f"Rank {args.local_rank} loss list: {loss_list}")
     return global_step, tr_loss / global_step
 
 
@@ -495,11 +495,11 @@ def main():
     # Evaluation (single pass on rank 0; weights are synced each step so identical across ranks)
     if args.local_rank in [-1, 0]:
         evaluate(args, model, tokenizer, prefix="")
-    else:
-        torch.distributed.barrier()
+    # Barrier must be reached by ALL ranks (including 0). Else branch barrier alone would deadlock
+    # because rank 0 never enters it.
     if args.local_rank >= 0:
         torch.distributed.barrier()
-        print("Rank {args.local_rank} ended!")
+        print("Rank {} ended!".format(args.local_rank))
         torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
