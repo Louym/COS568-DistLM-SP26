@@ -171,6 +171,8 @@ def train(args, train_dataset, model, tokenizer):
                       'attention_mask': batch[1],
                       'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
                       'labels':         batch[3]}
+            print(f"Rank {args.local_rank} inputs: {batch[0].shape}")
+            
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
