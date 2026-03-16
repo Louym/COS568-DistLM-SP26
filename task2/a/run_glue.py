@@ -166,8 +166,8 @@ def train(args, train_dataset, model, tokenizer):
         if args.local_rank >= 0 and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        start_time=time.perf_counter()
         for step, batch in enumerate(epoch_iterator):
+            start_time=time.perf_counter()
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
