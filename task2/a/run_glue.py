@@ -171,8 +171,6 @@ def train(args, train_dataset, model, tokenizer):
                       'attention_mask': batch[1],
                       'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
                       'labels':         batch[3]}
-            print(f"Rank {args.local_rank} inputs: {batch[0].shape}")
-            
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
@@ -500,9 +498,9 @@ def main():
 
     # Evaluation: all ranks must call evaluate() so load_and_cache_examples barriers sync; only rank 0 runs the eval loop.
     evaluate(args, model, tokenizer, prefix="")
-    if args.local_rank >= 0:
-        torch.distributed.barrier()
-        print("Rank {} ended!".format(args.local_rank))
+
+    if args.local_rank == 0:
+        print("Rank 0 ended!")
         torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
