@@ -1,10 +1,10 @@
 #!/bin/bash
-# Task 2(a): launch distributed RTE fine-tuning with gather/scatter gradient sync.
+# Task 3: launch distributed RTE fine-tuning with PyTorch DDP baseline.
 # Total batch size = per_device_train_batch_size * WORLD_SIZE (match Task 1: 64).
 #
 # Usage:
 #   1. Edit MASTER_IP, NODES, GLUE_DIR, PYTHON as needed.
-#   2. chmod +x task2a.sh && ./task2a.sh
+#   2. chmod +x task3.sh && ./task3.sh
 # Or run manually on each node (tmux), e.g. on rank-0 machine:
 #   python3 run_glue.py ... --local_rank 0 --master_ip $MASTER_IP --master_port $PORT --world_size 4
 
@@ -21,7 +21,7 @@ TASK_NAME=RTE
 PYTHON="${PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_GLUE="${SCRIPT_DIR}/run_glue.py"
-OUTPUT_DIR="/tmp/${TASK_NAME}_task2b"
+OUTPUT_DIR="/tmp/${TASK_NAME}_task3"
 
 # One entry per rank: SSH target for that rank (same order as rank 0..3)
 NODES=("10.10.1.2" "10.10.1.3" "10.10.1.4" "10.10.1.1")
@@ -56,6 +56,7 @@ for RANK in $(seq 0 $((WORLD_SIZE - 1))); do
 done
 
 wait
-echo "Task 2(b) jobs finished."
+echo "Task 3 jobs finished."
 
-python plot_task2b_loss_time.py --dir ${OUTPUT_DIR}
+python plot_task3_loss_time.py --dir ${OUTPUT_DIR}
+
