@@ -29,6 +29,7 @@ import torch
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
                               TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
+import torch.profiler
 from tqdm import tqdm, trange
 
 # import a previous version of the HuggingFace Transformers package
@@ -153,6 +154,27 @@ def train(args, train_dataset, model, tokenizer):
     fwd_time_list = []    # forward pass
     bwd_time_list = []    # backward + optimizer + scheduler
     comm_time_list = []   # gradient sync (communication)
+    prof = None
+    if getattr(args, "profile", False) and args.local_rank in [-1, 0]:
+        os.makedirs(args.output_dir, exist_ok=True)
+        trace_path = os.path.join(args.output_dir, "task2b_profile_rank0.json")
+
+        def _trace_handler(p):
+            p.export_chrome_trace(trace_path)
+
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if torch.cuda.is_available() and not args.no_cuda:
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
+        prof = torch.profiler.profile(
+            activities=activities,
+            schedule=torch.profiler.schedule(wait=1, warmup=0, active=3, repeat=1),
+            on_trace_ready=_trace_handler,
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+        )
+        prof.__enter__()
+
     for epoch in train_iterator:
         if args.local_rank >= 0 and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
@@ -207,6 +229,8 @@ def train(args, train_dataset, model, tokenizer):
             bwd_time_list.append(bwd_end - bwd_start)
             comm_time_list.append(step_comm_time)
             step_time_list.append(time.perf_counter() - step_start)
+            if prof is not None:
+                prof.step()
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
@@ -268,6 +292,8 @@ def train(args, train_dataset, model, tokenizer):
                 comm=comm_arr,
             )
     print(f"Rank {args.local_rank} loss list: {loss_list}")
+    if prof is not None:
+        prof.__exit__(None, None, None)
     return global_step, tr_loss / global_step
 
 
@@ -469,6 +495,8 @@ def main():
                         help="Master port (>1023).")
     parser.add_argument("--world_size", type=int, default=1,
                         help="Number of workers (nodes) in the process group.")
+    parser.add_argument("--profile", action="store_true",
+                        help="Enable torch.profiler (skip 1 step, profile next 3, rank0 only).")
     args = parser.parse_args()
 
     # Print immediately so you see each node start (before init_process_group blocks)
