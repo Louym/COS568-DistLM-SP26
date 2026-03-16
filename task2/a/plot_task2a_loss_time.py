@@ -5,9 +5,9 @@ Visualize Task 2(a) distributed training:
 - Wall-clock time curve.
 - Report global mean loss across all ranks and steps.
 
-Assumes run_glue.py saved, for each rank r,
-  {output_dir}/rank{r}_train_loss_time.npz
-with arrays: loss (shape [N]), time (shape [N]).
+Assumes run_glue.py saved, on rank 0:
+  {output_dir}/train_loss_time_allranks.npz
+with arrays: loss (shape [R, T]), time (shape [R, T]).
 """
 
 from __future__ import annotations
@@ -19,16 +19,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def load_rank_curves(out_dir: Path, world_size: int = 4) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    losses: list[np.ndarray] = []
-    times: list[np.ndarray] = []
-    for r in range(world_size):
-        path = out_dir / f"rank{r}_train_loss_time.npz"
-        if not path.exists():
-            raise FileNotFoundError(f"Missing file for rank {r}: {path}")
-        data = np.load(path)
-        losses.append(np.asarray(data["loss"], dtype=np.float32))
-        times.append(np.asarray(data["time"], dtype=np.float32))
+def load_rank_curves(out_dir: Path) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    path = out_dir / "train_loss_time_allranks.npz"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing aggregated file: {path}")
+    data = np.load(path)
+    losses_arr = np.asarray(data["loss"], dtype=np.float32)  # [R, T]
+    times_arr = np.asarray(data["time"], dtype=np.float32)   # [R, T]
+    losses = [losses_arr[r] for r in range(losses_arr.shape[0])]
+    times = [times_arr[r] for r in range(times_arr.shape[0])]
     return losses, times
 
 
@@ -45,11 +44,10 @@ def main() -> None:
         type=Path,
         default=Path(__file__).resolve().parent / "task2a_loss_time.png",
     )
-    ap.add_argument("--world_size", type=int, default=4, help="Number of distributed ranks")
     ap.add_argument("--dpi", type=int, default=150)
     args = ap.parse_args()
 
-    losses, times = load_rank_curves(args.dir, world_size=args.world_size)
+    losses, times = load_rank_curves(args.dir)
 
     # align lengths
     min_len = min(len(x) for x in losses)
@@ -68,8 +66,9 @@ def main() -> None:
     ax0, ax1 = axes
 
     # top: four loss curves + average loss curve
-    colors = plt.cm.tab10(np.linspace(0, 1, args.world_size))
-    for r in range(args.world_size):
+    world_size = len(losses)
+    colors = plt.cm.tab10(np.linspace(0, 1, world_size))
+    for r in range(world_size):
         ax0.plot(
             steps,
             losses[r],

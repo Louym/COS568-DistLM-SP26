@@ -215,19 +215,34 @@ def train(args, train_dataset, model, tokenizer):
         if args.local_rank >= 0:
             torch.distributed.barrier()
         ##################################################
-    # save loss and time curves
-    try:
-        save_dir = args.output_dir
-        os.makedirs(save_dir, exist_ok=True)
-        rank_tag = args.local_rank if args.local_rank >= 0 else 0
-        np.savez(
-            os.path.join(save_dir, f"rank{rank_tag}_train_loss_time.npz"),
-            loss=np.array(loss_list, dtype=np.float32),
-            time=np.array(time_list, dtype=np.float32),
-        )
-    except Exception as e:
-        logger.warning("Failed to save loss/time curves: %s", e)
-
+    # Gather loss/time from all ranks back to rank 0 (no共享存储假设)
+    if args.local_rank >= 0 and torch.distributed.is_initialized():
+        ws = torch.distributed.get_world_size()
+        # pad to same length across ranks
+        max_len = max(torch.tensor(len(loss_list), device=args.device).item()
+                      for _ in range(1))
+        # convert to tensor and pad
+        cur_len = len(loss_list)
+        loss_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        time_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        if cur_len > 0:
+            loss_tensor[:cur_len] = torch.tensor(loss_list, device=args.device, dtype=torch.float32)
+            time_tensor[:cur_len] = torch.tensor(time_list, device=args.device, dtype=torch.float32)
+        loss_gather = [torch.zeros_like(loss_tensor) for _ in range(ws)]
+        time_gather = [torch.zeros_like(time_tensor) for _ in range(ws)]
+        torch.distributed.all_gather(loss_gather, loss_tensor)
+        torch.distributed.all_gather(time_gather, time_tensor)
+        # only rank 0 saves
+        if args.local_rank == 0:
+            save_dir = args.output_dir
+            os.makedirs(save_dir, exist_ok=True)
+            loss_arr = torch.stack(loss_gather, dim=0).cpu().numpy()
+            time_arr = torch.stack(time_gather, dim=0).cpu().numpy()
+            np.savez(
+                os.path.join(save_dir, "train_loss_time_allranks.npz"),
+                loss=loss_arr,
+                time=time_arr,
+            )
     print(f"Rank {args.local_rank} loss list: {loss_list}")
     return global_step, tr_loss / global_step
 
