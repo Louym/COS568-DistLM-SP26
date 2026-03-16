@@ -16,12 +16,13 @@ WORLD_SIZE=4
 # Per-worker batch size: 16 * 4 workers = 64 global (same as Task 1)
 PER_DEVICE_BATCH=16
 
-GLUE_DIR="../../glue_data/"
+GLUE_DIR="../glue_data/"
 TASK_NAME=RTE
 PYTHON="${PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_GLUE="${SCRIPT_DIR}/run_glue.py"
-OUTPUT_DIR="/tmp/${TASK_NAME}_task2a"
+OUTPUT_DIR="../output_cache/task2b"
+mkdir -p ${OUTPUT_DIR}
 
 # One entry per rank: SSH target for that rank (same order as rank 0..3)
 NODES=("10.10.1.2" "10.10.1.3" "10.10.1.4" "10.10.1.1")
@@ -56,5 +57,6 @@ for RANK in $(seq 0 $((WORLD_SIZE - 1))); do
 done
 
 wait
-echo "Task 2(a) jobs finished."
-python plot_task2a_loss_time.py --dir ${OUTPUT_DIR}
+echo "Task 2(b) jobs finished."
+
+python plot_loss_time.py --dir ${OUTPUT_DIR}

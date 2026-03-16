@@ -26,14 +26,9 @@ import time
 
 import numpy as np
 import torch
-from torch.utils.data import (
-    DataLoader,
-    RandomSampler,
-    SequentialSampler,
-    TensorDataset,
-)
+from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler,
+                              TensorDataset)
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.profiler
 from tqdm import tqdm, trange
 
@@ -72,6 +67,36 @@ def set_seed(args):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     torch.cuda.manual_seed_all(args.seed)
+
+
+def _flatten_grads(model, device):
+    """Concatenate all parameter gradients into one 1-D tensor (same order as parameters())."""
+    chunks = []
+    for p in model.parameters():
+        if p.grad is not None:
+            chunks.append(p.grad.data.detach().float().reshape(-1))
+    if not chunks:
+        return torch.zeros(1, device=device)
+    return torch.cat(chunks)
+
+
+def _scatter_flat_grad_to_model(model, flat_buf):
+    """Write flat_buf into each parameter's .grad (float buffer)."""
+    idx = 0
+    for p in model.parameters():
+        if p.grad is not None:
+            n = p.grad.numel()
+            p.grad.data.copy_(flat_buf[idx : idx + n].view_as(p.grad).to(p.grad.dtype))
+            idx += n
+
+
+def sync_grads_allreduce(model, world_size):
+    """Task 2(b): use all-reduce to average gradients across workers."""
+    device = next(model.parameters()).device
+    flat = _flatten_grads(model, device)              # local grads
+    torch.distributed.all_reduce(flat, op=torch.distributed.ReduceOp.SUM)
+    flat /= world_size                                # average
+    _scatter_flat_grad_to_model(model, flat)          # write back into p.grad
 
 
 def train(args, train_dataset, model, tokenizer):
@@ -129,11 +154,10 @@ def train(args, train_dataset, model, tokenizer):
     fwd_time_list = []    # forward pass
     bwd_time_list = []    # backward + optimizer + scheduler
     comm_time_list = []   # gradient sync (communication)
-
     prof = None
     if getattr(args, "profile", False) and args.local_rank in [-1, 0]:
         os.makedirs(args.output_dir, exist_ok=True)
-        trace_path = os.path.join(args.output_dir, "task3_ddp_profile_rank0.json")
+        trace_path = os.path.join(args.output_dir, "task2b_profile_rank0.json")
 
         def _trace_handler(p):
             p.export_chrome_trace(trace_path)
@@ -182,17 +206,21 @@ def train(args, train_dataset, model, tokenizer):
             loss_list.append(loss.item())
 
             fwd_end = time.perf_counter()
-            step_comm_time = 0.0 # we can not count the communication time here
-            # default bwd timing when we do not step this iteration
+            step_comm_time = 0.0
+            # default bwd timing if we do not step this iteration
             bwd_start = fwd_end
             bwd_end = fwd_end
-
             if (step + 1) % args.gradient_accumulation_steps == 0:
-                # With DDP, gradient synchronization is triggered inside backward().
-                # We treat optimizer+scheduler as the "backward" phase for timing here.
+                ##################################################
+                comm_start = time.perf_counter()
+                if args.local_rank >= 0 and torch.distributed.is_initialized() and args.world_size > 1 and not args.fp16:
+                    sync_grads_allreduce(model, torch.distributed.get_world_size())
+                comm_end = time.perf_counter()
+                step_comm_time = comm_end - comm_start
                 bwd_start = time.perf_counter()
                 optimizer.step()
-                scheduler.step()  # Update learning rate schedule
+                ##################################################
+                scheduler.step() # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
                 bwd_end = time.perf_counter()
@@ -484,7 +512,7 @@ def main():
     args.n_gpu = torch.cuda.device_count()
 
     if args.local_rank >= 0:
-        backend = "nccl" if torch.cuda.is_available() and not args.no_cuda else "gloo"  # gloo on CloudLab CPUs
+        backend = "nccl" if torch.cuda.is_available() and not args.no_cuda else "gloo" # Since I use cloudlab, this is just gloo
         torch.distributed.init_process_group(
             backend=backend,
             init_method="tcp://{}:{}".format(args.master_ip, args.master_port),
@@ -542,18 +570,6 @@ def main():
         model = model_class.from_pretrained(args.model_name_or_path, config=config)
 
     model.to(args.device)
-
-    # Task 3: use PyTorch DistributedDataParallel for gradient synchronization
-    if args.local_rank >= 0 and args.world_size > 1:
-        if args.device.type == "cuda":
-            model = DDP(
-                model,
-                device_ids=[args.local_rank % max(1, args.n_gpu)],
-                output_device=args.local_rank % max(1, args.n_gpu),
-            )
-        else:
-            # CPU / gloo: no device_ids
-            model = DDP(model)
 
     logger.info("Training/evaluation parameters %s", args)
 

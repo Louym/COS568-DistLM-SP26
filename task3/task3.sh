@@ -21,7 +21,8 @@ TASK_NAME=RTE
 PYTHON="${PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN_GLUE="${SCRIPT_DIR}/run_glue.py"
-OUTPUT_DIR="/tmp/${TASK_NAME}_task3"
+OUTPUT_DIR="../output_cache/task3"
+mkdir -p ${OUTPUT_DIR}
 
 # One entry per rank: SSH target for that rank (same order as rank 0..3)
 NODES=("10.10.1.2" "10.10.1.3" "10.10.1.4" "10.10.1.1")
@@ -58,5 +59,5 @@ done
 wait
 echo "Task 3 jobs finished."
 
-python plot_task3_loss_time.py --dir ${OUTPUT_DIR}
+python plot_loss_time.py --dir ${OUTPUT_DIR}
 
