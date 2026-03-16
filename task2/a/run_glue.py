@@ -22,6 +22,7 @@ import glob
 import logging
 import os
 import random
+import time
 
 import numpy as np
 import torch
@@ -160,6 +161,8 @@ def train(args, train_dataset, model, tokenizer):
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)
     loss_list = []
+    time_list = []
+    train_start = time.time()
     for epoch in train_iterator:
         if args.local_rank >= 0 and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
@@ -188,6 +191,7 @@ def train(args, train_dataset, model, tokenizer):
             tr_loss += loss.item()
             # print("Minibatch {step} loss: {loss}".format(step=step, loss=loss.item()))
             loss_list.append(loss.item())
+            time_list.append(time.time() - train_start)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 ##################################################
                 if args.local_rank >= 0 and torch.distributed.is_initialized() and not args.fp16:
@@ -211,6 +215,19 @@ def train(args, train_dataset, model, tokenizer):
         if args.local_rank >= 0:
             torch.distributed.barrier()
         ##################################################
+    # save loss and time curves
+    try:
+        save_dir = args.output_dir
+        os.makedirs(save_dir, exist_ok=True)
+        rank_tag = args.local_rank if args.local_rank >= 0 else 0
+        np.savez(
+            os.path.join(save_dir, f"rank{rank_tag}_train_loss_time.npz"),
+            loss=np.array(loss_list, dtype=np.float32),
+            time=np.array(time_list, dtype=np.float32),
+        )
+    except Exception as e:
+        logger.warning("Failed to save loss/time curves: %s", e)
+
     print(f"Rank {args.local_rank} loss list: {loss_list}")
     return global_step, tr_loss / global_step
 
