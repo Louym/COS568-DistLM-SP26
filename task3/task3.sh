@@ -16,7 +16,7 @@ WORLD_SIZE=4
 # Per-worker batch size: 16 * 4 workers = 64 global (same as Task 1)
 PER_DEVICE_BATCH=16
 
-GLUE_DIR="../../glue_data/"
+GLUE_DIR="../glue_data/"
 TASK_NAME=RTE
 PYTHON="${PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
