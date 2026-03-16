@@ -161,13 +161,17 @@ def train(args, train_dataset, model, tokenizer):
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)
     loss_list = []
-    time_list = []
+    # Per-step timing breakdown (seconds)
+    step_time_list = []   # full step wall-clock
+    comp_time_list = []   # forward + backward
+    comm_time_list = []   # gradient sync (communication)
     for epoch in train_iterator:
         if args.local_rank >= 0 and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            start_time=time.perf_counter()
+            step_start = time.perf_counter()
+            comp_start = step_start
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -189,22 +193,31 @@ def train(args, train_dataset, model, tokenizer):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
             tr_loss += loss.item()
-            # print("Minibatch {step} loss: {loss}".format(step=step, loss=loss.item()))
             loss_list.append(loss.item())
+
+            comp_end = time.perf_counter()
+            step_comm_time = 0.0
+
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 ##################################################
                 if args.local_rank >= 0 and torch.distributed.is_initialized() and not args.fp16:
+                    comm_start = time.perf_counter()
                     sync_grads_gather_scatter(model, torch.distributed.get_world_size())
+                    comm_end = time.perf_counter()
+                    step_comm_time = comm_end - comm_start
                 optimizer.step()
                 ##################################################
                 scheduler.step() # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
+            # record timing for this step
+            comp_time_list.append(comp_end - comp_start)
+            comm_time_list.append(step_comm_time)
+            step_time_list.append(time.perf_counter() - step_start)
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
-            time_list.append(time.perf_counter() - start_time)
         if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
             break
@@ -215,7 +228,7 @@ def train(args, train_dataset, model, tokenizer):
         if args.local_rank >= 0:
             torch.distributed.barrier()
         ##################################################
-    # Gather loss/time from all ranks back to rank 0 (no共享存储假设)
+    # Gather loss/time from all ranks back to rank 0 (no shared filesystem assumption)
     if args.local_rank >= 0 and torch.distributed.is_initialized():
         ws = torch.distributed.get_world_size()
         # pad to same length across ranks
@@ -224,24 +237,36 @@ def train(args, train_dataset, model, tokenizer):
         # convert to tensor and pad
         cur_len = len(loss_list)
         loss_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
-        time_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        step_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        comp_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        comm_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
         if cur_len > 0:
             loss_tensor[:cur_len] = torch.tensor(loss_list, device=args.device, dtype=torch.float32)
-            time_tensor[:cur_len] = torch.tensor(time_list, device=args.device, dtype=torch.float32)
+            step_tensor[:cur_len] = torch.tensor(step_time_list, device=args.device, dtype=torch.float32)
+            comp_tensor[:cur_len] = torch.tensor(comp_time_list, device=args.device, dtype=torch.float32)
+            comm_tensor[:cur_len] = torch.tensor(comm_time_list, device=args.device, dtype=torch.float32)
         loss_gather = [torch.zeros_like(loss_tensor) for _ in range(ws)]
-        time_gather = [torch.zeros_like(time_tensor) for _ in range(ws)]
+        step_gather = [torch.zeros_like(step_tensor) for _ in range(ws)]
+        comp_gather = [torch.zeros_like(comp_tensor) for _ in range(ws)]
+        comm_gather = [torch.zeros_like(comm_tensor) for _ in range(ws)]
         torch.distributed.all_gather(loss_gather, loss_tensor)
-        torch.distributed.all_gather(time_gather, time_tensor)
+        torch.distributed.all_gather(step_gather, step_tensor)
+        torch.distributed.all_gather(comp_gather, comp_tensor)
+        torch.distributed.all_gather(comm_gather, comm_tensor)
         # only rank 0 saves
         if args.local_rank == 0:
             save_dir = args.output_dir
             os.makedirs(save_dir, exist_ok=True)
             loss_arr = torch.stack(loss_gather, dim=0).cpu().numpy()
-            time_arr = torch.stack(time_gather, dim=0).cpu().numpy()
+            step_arr = torch.stack(step_gather, dim=0).cpu().numpy()
+            comp_arr = torch.stack(comp_gather, dim=0).cpu().numpy()
+            comm_arr = torch.stack(comm_gather, dim=0).cpu().numpy()
             np.savez(
                 os.path.join(save_dir, "train_loss_time_allranks.npz"),
                 loss=loss_arr,
-                time=time_arr,
+                time=step_arr,
+                comp=comp_arr,
+                comm=comm_arr,
             )
     print(f"Rank {args.local_rank} loss list: {loss_list}")
     return global_step, tr_loss / global_step
