@@ -499,8 +499,8 @@ def main():
     # Evaluation: all ranks must call evaluate() so load_and_cache_examples barriers sync; only rank 0 runs the eval loop.
     evaluate(args, model, tokenizer, prefix="")
 
-    if args.local_rank == 0:
-        print("Rank 0 ended!")
+    if args.local_rank >= 0:
+        print("Rank {} ended!".format(args.local_rank))
         torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
