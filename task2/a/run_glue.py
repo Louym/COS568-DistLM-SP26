@@ -284,8 +284,8 @@ def evaluate(args, model, tokenizer, prefix=""):
 
 
 def load_and_cache_examples(args, task, tokenizer, evaluate=False):
-    # Our nodes do not share the same filesystem, so we don't need to barrier here
-    if args.local_rank not in [-1, 0]:
+    # For training, rank 0 builds and saves cache, other ranks wait and then read.
+    if not evaluate and args.local_rank not in [-1, 0]:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     processor = processors[task]()
@@ -316,14 +316,12 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
             pad_token_segment_id=4 if args.model_type in ['xlnet'] else 0,
         )
-        if args.local_rank in [-1, 0]:
+        if not evaluate and args.local_rank in [-1, 0]:
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
 
-    # This barrier must be reached by ALL ranks participating in distributed training,
-    # otherwise rank 0 would wait alone and see "Connection closed by peer".
-    if args.local_rank in [-1, 0]:
-        torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
+    if not evaluate and args.local_rank in [-1, 0]:
+        torch.distributed.barrier()
 
     # Convert to Tensors and build dataset
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
