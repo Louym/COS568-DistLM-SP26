@@ -222,9 +222,13 @@ def evaluate(args, model, tokenizer, prefix=""):
 
     results = {}
     for eval_task, eval_output_dir in zip(eval_task_names, eval_outputs_dirs):
+        # All ranks must call this so barriers inside load_and_cache_examples are reached by everyone.
         eval_dataset = load_and_cache_examples(args, eval_task, tokenizer, evaluate=True)
 
-        if not os.path.exists(eval_output_dir) and args.local_rank in [-1, 0]:
+        if args.local_rank not in [-1, 0]:
+            continue  # Only rank 0 runs the eval loop and writes results
+
+        if not os.path.exists(eval_output_dir):
             os.makedirs(eval_output_dir)
 
         args.eval_batch_size = args.per_device_eval_batch_size
@@ -492,11 +496,8 @@ def main():
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
-    # Evaluation (single pass on rank 0; weights are synced each step so identical across ranks)
-    if args.local_rank in [-1, 0]:
-        evaluate(args, model, tokenizer, prefix="")
-    # Barrier must be reached by ALL ranks (including 0). Else branch barrier alone would deadlock
-    # because rank 0 never enters it.
+    # Evaluation: all ranks must call evaluate() so load_and_cache_examples barriers sync; only rank 0 runs the eval loop.
+    evaluate(args, model, tokenizer, prefix="")
     if args.local_rank >= 0:
         torch.distributed.barrier()
         print("Rank {} ended!".format(args.local_rank))
