@@ -150,7 +150,8 @@ def train(args, train_dataset, model, tokenizer):
     loss_list = []
     # Per-step timing breakdown (seconds)
     step_time_list = []   # full step wall-clock
-    comp_time_list = []   # forward + backward
+    fwd_time_list = []    # forward pass
+    bwd_time_list = []    # backward + optimizer + scheduler
     comm_time_list = []   # gradient sync (communication)
     for epoch in train_iterator:
         if args.local_rank >= 0 and hasattr(train_sampler, "set_epoch"):
@@ -158,7 +159,7 @@ def train(args, train_dataset, model, tokenizer):
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
             step_start = time.perf_counter()
-            comp_start = step_start
+            fwd_start = step_start
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -182,9 +183,11 @@ def train(args, train_dataset, model, tokenizer):
             tr_loss += loss.item()
             loss_list.append(loss.item())
 
-            comp_end = time.perf_counter()
+            fwd_end = time.perf_counter()
             step_comm_time = 0.0
-
+            # default bwd timing if we do not step this iteration
+            bwd_start = fwd_end
+            bwd_end = fwd_end
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 ##################################################
                 comm_start = time.perf_counter()
@@ -192,13 +195,16 @@ def train(args, train_dataset, model, tokenizer):
                     sync_grads_allreduce(model, torch.distributed.get_world_size())
                 comm_end = time.perf_counter()
                 step_comm_time = comm_end - comm_start
+                bwd_start = time.perf_counter()
                 optimizer.step()
                 ##################################################
                 scheduler.step() # Update learning rate schedule
                 model.zero_grad()
                 global_step += 1
+                bwd_end = time.perf_counter()
             # record timing for this step
-            comp_time_list.append(comp_end - comp_start)
+            fwd_time_list.append(fwd_end - fwd_start)
+            bwd_time_list.append(bwd_end - bwd_start)
             comm_time_list.append(step_comm_time)
             step_time_list.append(time.perf_counter() - step_start)
 
@@ -225,20 +231,24 @@ def train(args, train_dataset, model, tokenizer):
         cur_len = len(loss_list)
         loss_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
         step_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
-        comp_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        fwd_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
+        bwd_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
         comm_tensor = torch.zeros(max_len, device=args.device, dtype=torch.float32)
         if cur_len > 0:
             loss_tensor[:cur_len] = torch.tensor(loss_list, device=args.device, dtype=torch.float32)
             step_tensor[:cur_len] = torch.tensor(step_time_list, device=args.device, dtype=torch.float32)
-            comp_tensor[:cur_len] = torch.tensor(comp_time_list, device=args.device, dtype=torch.float32)
+            fwd_tensor[:cur_len] = torch.tensor(fwd_time_list, device=args.device, dtype=torch.float32)
+            bwd_tensor[:cur_len] = torch.tensor(bwd_time_list, device=args.device, dtype=torch.float32)
             comm_tensor[:cur_len] = torch.tensor(comm_time_list, device=args.device, dtype=torch.float32)
         loss_gather = [torch.zeros_like(loss_tensor) for _ in range(ws)]
         step_gather = [torch.zeros_like(step_tensor) for _ in range(ws)]
-        comp_gather = [torch.zeros_like(comp_tensor) for _ in range(ws)]
+        fwd_gather = [torch.zeros_like(fwd_tensor) for _ in range(ws)]
+        bwd_gather = [torch.zeros_like(bwd_tensor) for _ in range(ws)]
         comm_gather = [torch.zeros_like(comm_tensor) for _ in range(ws)]
         torch.distributed.all_gather(loss_gather, loss_tensor)
         torch.distributed.all_gather(step_gather, step_tensor)
-        torch.distributed.all_gather(comp_gather, comp_tensor)
+        torch.distributed.all_gather(fwd_gather, fwd_tensor)
+        torch.distributed.all_gather(bwd_gather, bwd_tensor)
         torch.distributed.all_gather(comm_gather, comm_tensor)
         # only rank 0 saves
         if args.local_rank == 0:
@@ -246,13 +256,15 @@ def train(args, train_dataset, model, tokenizer):
             os.makedirs(save_dir, exist_ok=True)
             loss_arr = torch.stack(loss_gather, dim=0).cpu().numpy()
             step_arr = torch.stack(step_gather, dim=0).cpu().numpy()
-            comp_arr = torch.stack(comp_gather, dim=0).cpu().numpy()
+            fwd_arr = torch.stack(fwd_gather, dim=0).cpu().numpy()
+            bwd_arr = torch.stack(bwd_gather, dim=0).cpu().numpy()
             comm_arr = torch.stack(comm_gather, dim=0).cpu().numpy()
             np.savez(
                 os.path.join(save_dir, "train_loss_time_allranks.npz"),
                 loss=loss_arr,
                 time=step_arr,
-                comp=comp_arr,
+                fwd=fwd_arr,
+                bwd=bwd_arr,
                 comm=comm_arr,
             )
     print(f"Rank {args.local_rank} loss list: {loss_list}")

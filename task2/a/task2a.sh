@@ -57,3 +57,4 @@ done
 
 wait
 echo "Task 2(a) jobs finished."
+python plot_task2a_loss_time.py --dir ${OUTPUT_DIR}

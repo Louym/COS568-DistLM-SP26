@@ -9,8 +9,9 @@ Assumes run_glue.py saved, on rank 0:
   {output_dir}/train_loss_time_allranks.npz
 with arrays:
   loss: [R, T]  per-rank minibatch losses
-  time: [R, T]  per-step wall-clock time (compute + communication)
-  comp: [R, T]  per-step compute time (forward + backward)
+  time: [R, T]  per-step wall-clock time (forward + backward + communication)
+  fwd:  [R, T]  per-step forward time
+  bwd:  [R, T]  per-step backward + optimizer time
   comm: [R, T]  per-step communication time (gradient sync)
 """
 
@@ -23,20 +24,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def load_rank_curves(out_dir: Path) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
+def load_rank_curves(out_dir: Path) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
     path = out_dir / "train_loss_time_allranks.npz"
     if not path.exists():
         raise FileNotFoundError(f"Missing aggregated file: {path}")
     data = np.load(path)
     losses_arr = np.asarray(data["loss"], dtype=np.float32)  # [R, T]
     times_arr = np.asarray(data["time"], dtype=np.float32)   # [R, T]
-    comp_arr = np.asarray(data.get("comp", times_arr), dtype=np.float32)
+    fwd_arr = np.asarray(data.get("fwd", np.zeros_like(times_arr)), dtype=np.float32)
+    bwd_arr = np.asarray(data.get("bwd", np.zeros_like(times_arr)), dtype=np.float32)
     comm_arr = np.asarray(data.get("comm", np.zeros_like(times_arr)), dtype=np.float32)
     losses = [losses_arr[r] for r in range(losses_arr.shape[0])]
     times = [times_arr[r] for r in range(times_arr.shape[0])]
-    comps = [comp_arr[r] for r in range(comp_arr.shape[0])]
+    fwds = [fwd_arr[r] for r in range(fwd_arr.shape[0])]
+    bwds = [bwd_arr[r] for r in range(bwd_arr.shape[0])]
     comms = [comm_arr[r] for r in range(comm_arr.shape[0])]
-    return losses, times, comps, comms
+    return losses, times, fwds, bwds, comms
 
 
 def main() -> None:
@@ -55,13 +58,14 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=150)
     args = ap.parse_args()
 
-    losses, times, comps, comms = load_rank_curves(args.dir)
+    losses, times, fwds, bwds, comms = load_rank_curves(args.dir)
 
     # align lengths
     min_len = min(len(x) for x in losses)
     losses = [x[:min_len] for x in losses]
     times = [t[:min_len] for t in times]
-    comps = [c[:min_len] for c in comps]
+    fwds = [c[:min_len] for c in fwds]
+    bwds = [c[:min_len] for c in bwds]
     comms = [c[:min_len] for c in comms]
 
     steps = np.arange(min_len)
@@ -71,8 +75,10 @@ def main() -> None:
     # time curves: average time of all ranks
     times_arr = np.stack(times, axis=0)
     mean_time = times_arr.mean(axis=0)
-    comp_arr = np.stack(comps, axis=0)
-    mean_comp = comp_arr.mean(axis=0)
+    fwd_arr = np.stack(fwds, axis=0)
+    mean_fwd = fwd_arr.mean(axis=0)
+    bwd_arr = np.stack(bwds, axis=0)
+    mean_bwd = bwd_arr.mean(axis=0)
     comm_arr = np.stack(comms, axis=0)
     mean_comm = comm_arr.mean(axis=0)
 
@@ -105,8 +111,9 @@ def main() -> None:
     ax0.grid(True, alpha=0.3)
 
     # bottom: time breakdown (x: step, y: time)
-    ax1.plot(steps, mean_time, "k--", linewidth=2.0, label="Total (compute + comm)")
-    ax1.plot(steps, mean_comp, "-", color="steelblue", linewidth=2.0, label="Compute (fwd + bwd)")
+    ax1.plot(steps, mean_time, "k--", linewidth=2.0, label="Total (fwd + bwd + comm)")
+    ax1.plot(steps, mean_fwd, "-", color="steelblue", linewidth=2.0, label="Forward")
+    ax1.plot(steps, mean_bwd, "-", color="tab:green", linewidth=2.0, label="Backward + opt")
     ax1.plot(steps, mean_comm, "-", color="darkorange", linewidth=2.0, label="Communication (grad sync)")
     ax1.set_xlabel("Optimization step")
     ax1.set_ylabel("Time per step (s)")
@@ -122,7 +129,8 @@ def main() -> None:
     print(f"Wrote {args.out}")
     print(f"Global mean loss over all ranks and steps: {global_mean_loss:.6f}")
     print(f"Global mean total time (except first step): {mean_time[1:].mean():.6f} seconds")
-    print(f"Global mean compute time (except first step): {mean_comp[1:].mean():.6f} seconds")
+    print(f"Global mean forward time (except first step): {mean_fwd[1:].mean():.6f} seconds")
+    print(f"Global mean backward time (except first step): {mean_bwd[1:].mean():.6f} seconds")
     print(f"Global mean communication time (except first step): {mean_comm[1:].mean():.6f} seconds")
 
 
