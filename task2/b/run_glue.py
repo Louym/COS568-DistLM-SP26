@@ -89,26 +89,13 @@ def _scatter_flat_grad_to_model(model, flat_buf):
             idx += n
 
 
-def sync_grads_gather_scatter(model, world_size):
-    """
-    Task 2(a): rank 0 gathers gradients from all workers, averages, scatters the mean
-    back so every worker has the same averaged gradient before optimizer.step().
-    """
+def sync_grads_allreduce(model, world_size):
+    """Task 2(b): use all-reduce to average gradients across workers."""
     device = next(model.parameters()).device
-    flat = _flatten_grads(model, device)
-    if torch.distributed.get_rank() == 0:
-        gather_list = [torch.empty_like(flat) for _ in range(world_size)]
-    else:
-        gather_list = None
-    torch.distributed.gather(flat, gather_list=gather_list, dst=0)
-    if torch.distributed.get_rank() == 0:
-        avg = torch.stack(gather_list, dim=0).mean(dim=0)
-        scatter_list = [avg.clone() for _ in range(world_size)]
-    else:
-        scatter_list = None
-    out = torch.empty_like(flat)
-    torch.distributed.scatter(out, scatter_list=scatter_list, src=0)
-    _scatter_flat_grad_to_model(model, out)
+    flat = _flatten_grads(model, device)              # local grads
+    torch.distributed.all_reduce(flat, op=torch.distributed.ReduceOp.SUM)
+    flat /= world_size                                # average
+    _scatter_flat_grad_to_model(model, flat)          # write back into p.grad
 
 
 def train(args, train_dataset, model, tokenizer):
@@ -202,7 +189,7 @@ def train(args, train_dataset, model, tokenizer):
                 ##################################################
                 comm_start = time.perf_counter()
                 if args.local_rank >= 0 and torch.distributed.is_initialized() and args.world_size > 1 and not args.fp16:
-                    sync_grads_gather_scatter(model, torch.distributed.get_world_size())
+                    sync_grads_allreduce(model, torch.distributed.get_world_size())
                 comm_end = time.perf_counter()
                 step_comm_time = comm_end - comm_start
                 optimizer.step()
