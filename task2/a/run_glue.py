@@ -320,7 +320,9 @@ def load_and_cache_examples(args, task, tokenizer, evaluate=False):
             logger.info("Saving features into cached file %s", cached_features_file)
             torch.save(features, cached_features_file)
 
-    if args.local_rank == 0:
+    # This barrier must be reached by ALL ranks participating in distributed training,
+    # otherwise rank 0 would wait alone and see "Connection closed by peer".
+    if args.local_rank in [-1, 0]:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
 
     # Convert to Tensors and build dataset
