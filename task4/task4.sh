@@ -45,7 +45,8 @@ do
     --overwrite_output_dir \
     --master_ip ${MASTER_IP} \
     --master_port ${MASTER_PORT} \
-    --world_size ${WORLD_SIZE}"
+    --world_size ${WORLD_SIZE} \
+    --profile"
 
   # Use unbuffered Python so "[rank N] process started" prints immediately
   PYTHON="${PYTHON:-python3 -u}"
@@ -59,5 +60,4 @@ do
 
   wait
   echo "Task ${TASK} jobs finished."
-  python ../${TASK}/plot_loss_time.py --dir ${OUTPUT_DIR}
 done
