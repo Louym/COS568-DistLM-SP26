@@ -36,7 +36,7 @@ def main() -> None:
     ap.add_argument(
         "--dir",
         type=Path,
-        required=True,
+        default=Path("/tmp/RTE_task2a"),
         help="Output dir used by run_glue.py (contains rank*_train_loss_time.npz files)",
     )
     ap.add_argument(

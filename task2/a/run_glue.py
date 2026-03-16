@@ -162,11 +162,11 @@ def train(args, train_dataset, model, tokenizer):
     set_seed(args)
     loss_list = []
     time_list = []
-    train_start = time.time()
     for epoch in train_iterator:
         if args.local_rank >= 0 and hasattr(train_sampler, "set_epoch"):
             train_sampler.set_epoch(epoch)
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+        start_time=time.perf_counter()
         for step, batch in enumerate(epoch_iterator):
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
@@ -191,7 +191,6 @@ def train(args, train_dataset, model, tokenizer):
             tr_loss += loss.item()
             # print("Minibatch {step} loss: {loss}".format(step=step, loss=loss.item()))
             loss_list.append(loss.item())
-            time_list.append(time.time() - train_start)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 ##################################################
                 if args.local_rank >= 0 and torch.distributed.is_initialized() and not args.fp16:
@@ -205,6 +204,7 @@ def train(args, train_dataset, model, tokenizer):
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
                 break
+            time_list.append(time.perf_counter() - start_time)
         if args.max_steps > 0 and global_step > args.max_steps:
             train_iterator.close()
             break
