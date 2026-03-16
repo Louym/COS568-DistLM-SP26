@@ -61,3 +61,20 @@ do
   wait
   echo "Task ${TASK} jobs finished."
 done
+
+
+for TASK in task2a task2b task3; 
+do
+  echo "Plotting task ${TASK}..."
+  GLUE_DIR="../glue_data/"
+  TASK_NAME=RTE
+  PYTHON="${PYTHON:-python3}"
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  RUN_GLUE="${SCRIPT_DIR}/run_glue_${TASK}.py"
+  OUTPUT_DIR="../output_cache/${TASK}"
+  mkdir -p ${OUTPUT_DIR}
+
+  python ../${TASK}/plot_loss_time.py --dir ${OUTPUT_DIR}
+done
+
+
